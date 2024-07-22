@@ -149,22 +149,19 @@ def _compute_mask_spans(
 
 def _generate_mask(indices: Tensor, max_row_len: int) -> Tensor:
     """Generate a boolean mask by setting ``indices`` to ``True``."""
+
     # (N, S)
     float_mask = torch.zeros((indices.size(0), max_row_len), device=indices.device)
-
+    
     # Set elements corresponding to masked indices to 1.
     float_mask.scatter_(1, indices, 1.0)
+    if float_mask.sum(1).min() != float_mask.sum(1).max():
 
-    # Since mask spans may overlap, rows might have varying number of masked
-    # elements; therefore, we have to randomly unmask some of the elements to
-    # ensure that all rows have the same amount of masking.
-    min_num_masked = int(torch.count_nonzero(float_mask, dim=-1).min())
+        indices = [(torch.unique(row), len(row[0])) for row in torch.split(indices, 1, dim=0)]
 
-    # (N, min(M x L))
-    # We randomly pick `min_num_masked` masked elements from each row, which
-    # effectively unmasks the remaining elements.
-    indices = torch.multinomial(float_mask, num_samples=min_num_masked)
-
+        indices = [torch.concatenate([row, torch.multinomial(1-msk, num_samples=desired_len-len(row))]) if len(row) < desired_len else row for (row, desired_len), msk in zip(indices, float_mask)]
+        indices = torch.stack(indices, dim=0)
+        
     # (N, S)
     # Now we construct the actual boolean mask which has the same number of
     # masked elements in each row.
