@@ -92,6 +92,10 @@ class Wav2Vec2Config:
     min_num_spatial_mask_spans: int = 2
     """The minimum number of spatial masks sampled per sequence."""
 
+    add_masks: bool = False
+    """How to ensure each row has the same number of masked elements (if True, 
+    randomly add masked elements. If False, randomly remove)."""
+
     # Quantization
     quantized_dim: int = 256
     """The output dimensionality of vector quantizer."""
@@ -297,6 +301,7 @@ class Wav2Vec2Builder:
             self._config.spatial_mask_span_len,
             self._config.max_spatial_mask_prob,
             self._config.min_num_spatial_mask_spans,
+            self._config.add_masks,
             device=self._device,
             dtype=self._dtype,
         )

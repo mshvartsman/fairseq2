@@ -28,6 +28,7 @@ class Wav2Vec2Masker(Module):
     temporal_mask_embed: Parameter
     spatial_span_len: int
     max_spatial_mask_prob: float
+    add_masks: bool
 
     def __init__(
         self,
@@ -38,6 +39,7 @@ class Wav2Vec2Masker(Module):
         spatial_span_len: int = 10,
         max_spatial_mask_prob: float = 0.0,
         min_num_spatial_mask_spans: int = 2,
+        add_masks: bool = False,
         *,
         device: Optional[Device] = None,
         dtype: Optional[DataType] = None,
@@ -73,6 +75,7 @@ class Wav2Vec2Masker(Module):
         self.spatial_span_len = spatial_span_len
         self.max_spatial_mask_prob = max_spatial_mask_prob
         self.min_num_spatial_mask_spans = min_num_spatial_mask_spans
+        self.add_masks = add_masks
 
         self.reset_parameters()
 
@@ -108,6 +111,7 @@ class Wav2Vec2Masker(Module):
             max_mask_prob=self.max_temporal_mask_prob,
             row_lens=padding_mask.seq_lens if padding_mask is not None else None,
             min_num_spans=self.min_num_temporal_mask_spans,
+            add_masks=self.add_masks,
             device=seqs.device,
         )
 

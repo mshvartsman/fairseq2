@@ -36,6 +36,7 @@ def compute_row_mask(
     max_mask_prob: float,
     row_lens: Optional[Tensor] = None,
     min_num_spans: int = 0,
+    add_masks: bool = False,
     device: Optional[Device] = None,
 ) -> Optional[Tensor]:
     """Compute a random row mask of the specified shape.
@@ -54,6 +55,9 @@ def compute_row_mask(
         number of rows.
     :param min_num_spans:
         The minimum number of mask spans per row.
+    :param add_masks: 
+        How to handle the case where number of masked elements is not the same in each row. 
+        If False (the default), randomly remove masked elements. If True, randomly mask unmasked elements. 
     :param device:
         The device on which to initialize the mask.
 
@@ -88,7 +92,7 @@ def compute_row_mask(
     if indices is None:
         return row_lens.new_empty((0, 0))
 
-    return _generate_mask(indices, max_row_len).to(device)
+    return _generate_mask(indices, max_row_len, add_masks).to(device)
 
 
 def _compute_mask_spans(
@@ -149,7 +153,7 @@ def _compute_mask_spans(
     return span_offsets + indices
 
 
-def _generate_mask(indices: Tensor, max_row_len: int) -> Tensor:
+def _generate_mask(indices: Tensor, max_row_len: int, add_masks=False) -> Tensor:
     """Generate a boolean mask by setting ``indices`` to ``True``."""
     # (N, S)
     float_mask = torch.zeros((indices.size(0), max_row_len), device=indices.device)
@@ -157,19 +161,35 @@ def _generate_mask(indices: Tensor, max_row_len: int) -> Tensor:
     # Set elements corresponding to masked indices to 1.
     float_mask.scatter_(1, indices, 1.0)
 
-    # Since mask spans may overlap, rows might have varying number of masked
-    # elements; therefore, we have to randomly unmask some of the elements to
-    # ensure that all rows have the same amount of masking.
-    min_num_masked = int(torch.count_nonzero(float_mask, dim=-1).min())
+    # We want the number of masked elements to be the same in each row. If 
+    # we sample overlapping masks, we can do two things: randomly remove masked elements
+    # until each row has the same number of masked elements as the least masked row
+    # (this is the default fs1 strategy), or randomly add masked elements until 
+    # each row has the same number of masked elements as the most masked row. 
 
-    # (N, min(M x L))
-    # We randomly pick `min_num_masked` masked elements from each row, which
-    # effectively unmasks the remaining elements.
-    indices = torch.multinomial(float_mask, num_samples=min_num_masked)
+    if add_masks: 
 
-    # (N, S)
-    # Now we construct the actual boolean mask which has the same number of
-    # masked elements in each row.
-    bool_mask = torch.full_like(float_mask, False, dtype=torch.bool)
+        min_num_unmasked = int(torch.count_nonzero(1-float_mask, dim=-1).min())
+        indices = torch.multinomial(1-float_mask, num_samples=min_num_unmasked)
+        bool_mask = torch.full_like(float_mask, True, dtype=torch.bool)
 
-    return bool_mask.scatter_(1, indices, True)
+        return bool_mask.scatter_(1, indices, False)
+
+    else: 
+
+        # Since mask spans may overlap, rows might have varying number of masked
+        # elements; therefore, we have to randomly unmask some of the elements to
+        # ensure that all rows have the same amount of masking.
+        min_num_masked = int(torch.count_nonzero(float_mask, dim=-1).min())
+
+        # (N, min(M x L))
+        # We randomly pick `min_num_masked` masked elements from each row, which
+        # effectively unmasks the remaining elements.
+        indices = torch.multinomial(float_mask, num_samples=min_num_masked)
+
+        # (N, S)
+        # Now we construct the actual boolean mask which has the same number of
+        # masked elements in each row.
+        bool_mask = torch.full_like(float_mask, False, dtype=torch.bool)
+
+        return bool_mask.scatter_(1, indices, True)
