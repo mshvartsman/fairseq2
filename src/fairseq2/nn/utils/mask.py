@@ -155,16 +155,26 @@ def _generate_mask(indices: Tensor, max_row_len: int) -> Tensor:
     
     # Set elements corresponding to masked indices to 1.
     float_mask.scatter_(1, indices, 1.0)
-    if float_mask.sum(1).min() != float_mask.sum(1).max():
 
-        indices = [(torch.unique(row), len(row[0])) for row in torch.split(indices, 1, dim=0)]
+    # HACK: just pick the biggest mask and permute it
+    mask_lengths = float_mask.sum(1)
+    longest_mask = torch.argmax(mask_lengths)
+    
+    new_masks = torch.tile(float_mask[longest_mask], (indices.size(0),1))
+    
+    # now randomly shift the masks for each instance 
+    shifts = torch.randint(high=max_row_len, size=(indices.size(0),))
 
-        indices = [torch.concatenate([row, torch.multinomial(1-msk, num_samples=desired_len-len(row))]) if len(row) < desired_len else row for (row, desired_len), msk in zip(indices, float_mask)]
-        indices = torch.stack(indices, dim=0)
-        
-    # (N, S)
-    # Now we construct the actual boolean mask which has the same number of
-    # masked elements in each row.
-    bool_mask = torch.full_like(float_mask, False, dtype=torch.bool)
 
-    return bool_mask.scatter_(1, indices, True)
+    def _roll_along(arr, shifts, dim):
+        # https://stackoverflow.com/a/76920720
+        assert arr.ndim - 1 == shifts.ndim
+        dim %= arr.ndim
+        shape = (1,) * dim + (-1,) + (1,) * (arr.ndim - dim - 1)
+        dim_indices = torch.arange(arr.shape[dim]).reshape(shape)
+        indices = (dim_indices - shifts.unsqueeze(dim)) % arr.shape[dim]
+        return torch.gather(arr, dim, indices)
+
+    masks = _roll_along(new_masks, shifts, 1)
+
+    return masks.bool()
