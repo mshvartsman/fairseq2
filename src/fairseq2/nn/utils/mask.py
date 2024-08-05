@@ -160,18 +160,16 @@ def _generate_mask(indices: Tensor, max_row_len: int) -> Tensor:
     mask_lengths = float_mask.sum(1)
     longest_mask = torch.argmax(mask_lengths)
     
-    new_masks = torch.tile(float_mask[longest_mask], (indices.size(0),1))
-    
+    new_masks = torch.tile(float_mask[longest_mask], (indices.size(0),1))    
     # now randomly shift the masks for each instance 
-    shifts = torch.randint(high=max_row_len, size=(indices.size(0),))
-
+    shifts = torch.randint(high=max_row_len, size=(indices.size(0),), device=indices.device)
 
     def _roll_along(arr, shifts, dim):
         # https://stackoverflow.com/a/76920720
         assert arr.ndim - 1 == shifts.ndim
         dim %= arr.ndim
         shape = (1,) * dim + (-1,) + (1,) * (arr.ndim - dim - 1)
-        dim_indices = torch.arange(arr.shape[dim]).reshape(shape)
+        dim_indices = torch.arange(arr.shape[dim], device=arr.device).reshape(shape)
         indices = (dim_indices - shifts.unsqueeze(dim)) % arr.shape[dim]
         return torch.gather(arr, dim, indices)
 
