@@ -62,6 +62,19 @@ class VectorQuantizerOutput(ABC):
         pass
 
 
+def renyi_entropy(p, alpha):
+    # limits
+    if alpha == 1:  # shannon entropy
+        return -torch.sum(p * torch.log(p + 1e-7), dim=-1)
+    # elif (alpha == 0): # hartley entropy, but who cares
+    #     return torch.ones(len(p)) * log(len(p))
+    # elif (alpha == torch.inf): # min-entropy (not differentiable)
+    #     return -torch.log(torch.max(p))
+    # regular
+    else:
+        return torch.log(torch.sum(p**alpha, dim=-1)) / (1 - alpha)
+
+
 @final
 class GumbelVectorQuantizer(VectorQuantizer):
     """Quantizes incoming data using Gumbel-Softmax."""
@@ -85,6 +98,9 @@ class GumbelVectorQuantizer(VectorQuantizer):
         num_codebook_entries: int,
         *,
         codebook_sampling_temperature: tuple[float, float, float],
+        renyi_alpha: float = 1.0,  # shannon entropy by default
+        use_perplexity: bool = True,
+        use_uniform_penalty: bool = False,
         device: Device | None = None,
         dtype: DataType | None = None,
     ):
@@ -115,6 +131,9 @@ class GumbelVectorQuantizer(VectorQuantizer):
         self.num_codebooks = num_codebooks
         self.num_codebook_entries = num_codebook_entries
         self.max_temp, self.min_temp, self.temp_decay = codebook_sampling_temperature
+        self.renyi_alpha = renyi_alpha
+        self.use_perplexity = use_perplexity
+        self.use_uniform_penalty = use_uniform_penalty
 
         num_total_entries = num_codebooks * num_codebook_entries
 
@@ -176,9 +195,26 @@ class GumbelVectorQuantizer(VectorQuantizer):
             x.view(bsz * tsz, self.num_codebooks, -1).float(), dim=-1
         ).mean(dim=0)
 
-        prob_perplexity = torch.exp(
-            -torch.sum(avg_probs * torch.log(avg_probs + 1e-7), dim=-1)
-        ).sum()
+        entropy = renyi_entropy(avg_probs + 1e-7, alpha=self.renyi_alpha)
+        if self.use_perplexity:
+            prob_perplexity = torch.exp(entropy).sum()
+        else:
+            prob_perplexity = entropy.sum()  # HACK this isn't perplexithy anymore
+
+        # HACK just add it to perplexity for now
+        if self.use_uniform_penalty:
+            n = self.num_codebooks * self.num_codebook_entries
+            uniform_perplexity = renyi_entropy(
+                torch.abs(avg_probs - 1 / n) + 1e-7, alpha=self.renyi_alpha
+            )
+            if self.use_perplexity:
+                prob_perplexity += torch.exp(uniform_perplexity).sum()
+            else:
+                prob_perplexity += uniform_perplexity.sum()
+
+        # prob_perplexity = torch.exp(
+        #     -torch.sum(avg_probs * torch.log(avg_probs + 1e-7), dim=-1)
+        # ).sum()
 
         if self.training:
             x = gumbel_softmax(x.float(), tau=current_temp, hard=True).type_as(x)

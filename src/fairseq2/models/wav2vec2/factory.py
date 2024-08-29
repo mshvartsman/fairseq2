@@ -119,6 +119,12 @@ class Wav2Vec2Config:
     logit_temp: float = 0.1
     """The temperature to divide logits by."""
 
+    renyi_alpha: float = 1.0
+
+    use_perplexity: bool = True
+
+    use_uniform_penalty: bool = False
+
 
 wav2vec2_archs = ConfigRegistry[Wav2Vec2Config]()
 
@@ -316,6 +322,9 @@ class Wav2Vec2Builder:
             self._config.num_codebooks,
             self._config.num_codebook_entries,
             codebook_sampling_temperature=self._config.codebook_sampling_temperature,
+            renyi_alpha=self._config.renyi_alpha,
+            use_perplexity=self._config.use_perplexity,
+            use_uniform_penalty=self._config.use_uniform_penalty,
             device=self._device,
             dtype=self._dtype,
         )
