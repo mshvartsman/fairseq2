@@ -258,7 +258,7 @@ class GumbelVectorQuantizer(VectorQuantizer):
                 #     # baseline
                 #     x = gumbel_softmax(x.float(), tau=current_temp, hard=True).type_as(x)
         if self.training:
-            if self.rand_source == "bias": 
+            if self.rand_source == "bias" or self.rand_source == "none": 
                 # randomize the bias (above) instead of inside gumbel_softmax
                 logits = x.float() / current_temp
             elif self.rand_source == "gumbel":
