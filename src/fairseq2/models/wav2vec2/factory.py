@@ -124,6 +124,10 @@ class Wav2Vec2Config:
     use_perplexity: bool = True
 
     use_uniform_penalty: bool = False
+    
+    use_mlp: bool = False
+    rand_source: str = "gumbel"
+    nonlinearity: str = "softmax"
 
 
 wav2vec2_archs = ConfigRegistry[Wav2Vec2Config]()

@@ -14,7 +14,6 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import Module, Parameter
-from torch.nn.functional import gumbel_softmax
 from typing_extensions import override
 
 from fairseq2.nn import Linear
@@ -101,6 +100,9 @@ class GumbelVectorQuantizer(VectorQuantizer):
         renyi_alpha: float = 1.0,  # shannon entropy by default
         use_perplexity: bool = True,
         use_uniform_penalty: bool = False,
+        use_mlp: bool = False,
+        rand_source: str = "gumbel",
+        nonlinearity: str = "softmax",
         device: Device | None = None,
         dtype: DataType | None = None,
     ):
@@ -134,17 +136,48 @@ class GumbelVectorQuantizer(VectorQuantizer):
         self.renyi_alpha = renyi_alpha
         self.use_perplexity = use_perplexity
         self.use_uniform_penalty = use_uniform_penalty
+        self.use_mlp = use_mlp
+        self.rand_source = rand_source
+        self.nonlinearity = nonlinearity
 
         num_total_entries = num_codebooks * num_codebook_entries
 
-        self.entry_proj = Linear(
-            self.input_dim,
-            num_total_entries,
-            bias=True,
-            init_fn=init_entry_projection,
-            device=device,
-            dtype=dtype,
-        )
+        if self.use_mlp:
+            self.entry_proj = nn.Sequential(
+                    Linear(
+                        self.input_dim,
+                        num_total_entries,
+                        bias=True,
+                        init_fn=init_entry_projection,
+                        device=device,
+                        dtype=dtype,
+                    ),
+                    nn.ReLU(),
+                    Linear(
+                        num_total_entries,
+                        num_total_entries,
+                        bias=True,
+                        device=device,
+                        dtype=dtype,
+                    ),
+            )
+            if self.rand_source == "bias":
+                self.entry_proj[-1].bias.requires_grad_(False)
+
+        else:
+            self.entry_proj = Linear(
+                self.input_dim,
+                num_total_entries,
+                bias=True,
+                init_fn=init_entry_projection,
+                device=device,
+                dtype=dtype,
+            )
+            if self.rand_source == "bias":
+                self.entry_proj.bias.requires_grad_(False)
+
+        
+            
 
         self.entries = Parameter(
             torch.empty((1, num_total_entries, entry_dim), device=device, dtype=dtype)
@@ -168,6 +201,12 @@ class GumbelVectorQuantizer(VectorQuantizer):
 
         bsz, tsz, fsz = x.shape
 
+        if self.rand_source == "bias":
+            if isinstance(self.entry_proj, nn.Sequential):
+                self.entry_proj[-1].bias.exponential_().log_()
+            else: 
+                self.entry_proj.bias.exponential_().log_()
+    
         x = self.entry_proj(x)
 
         #        x = x.unflatten(-1, (self.num_codebooks, self.num_codebook_entries))
@@ -215,12 +254,31 @@ class GumbelVectorQuantizer(VectorQuantizer):
         # prob_perplexity = torch.exp(
         #     -torch.sum(avg_probs * torch.log(avg_probs + 1e-7), dim=-1)
         # ).sum()
-
+                # if self.rand_source == "gumbel":
+                #     # baseline
+                #     x = gumbel_softmax(x.float(), tau=current_temp, hard=True).type_as(x)
         if self.training:
-            x = gumbel_softmax(x.float(), tau=current_temp, hard=True).type_as(x)
-        else:
+            if self.rand_source == "bias": 
+                # randomize the bias (above) instead of inside gumbel_softmax
+                logits = x.float() / current_temp
+            elif self.rand_source == "gumbel":
+                # randomize with gumbel
+                gumbels = -torch.empty_like(x.float()).exponential_().log()  # ~Gumbel(0,1)
+                logits = (x.float() + gumbels) / current_temp  # ~Gumbel(logits,tau)
+            else: 
+                raise NotImplementedError()
+            if self.nonlinearity == "softmax":
+                soft_x = nn.functional.softmax(logits, dim=-1)
+                hard_x = hard_x.reshape(*soft_x.shape) # already constructed above
+            elif self.nonlinearity == "sigmoid":
+                soft_x = nn.functional.sigmoid(logits)
+                # since we don't normalize to sum to 1, hard_x isn't 
+                # max, it's p > 0.5
+                hard_x = (soft_x > 0.5).int()
+            # straight-through gradient trick
+            x = hard_x - soft_x.detach() + soft_x
+        else: 
             x = hard_x
-
         x = x.view(bsz * tsz, -1)
 
         cb = x
