@@ -125,9 +125,9 @@ class Wav2Vec2Config:
 
     use_uniform_penalty: bool = False
     
-    use_mlp: bool = False
-    rand_source: str = "gumbel"
-    nonlinearity: str = "softmax"
+    quantizer_use_mlp: bool = False
+    quantizer_rand_source: str = "gumbel"
+    quantizer_nonlinearity: str = "softmax"
 
 
 wav2vec2_archs = ConfigRegistry[Wav2Vec2Config]()
